@@ -1,0 +1,361 @@
+2 players
+Each player has their own area (left and right side)
+Numbers available:
+0
+2
+4
+6
+8
+These numbers come from opening a book.
+Example
+Page 42 & 43 -> 2
+Page 70 & 71 -> 0
+Page 118 & 119 -> 8
+Basically
+number = last digit of left page
+Only
+0
+2
+4
+6
+8
+are possible.
+Toss
+
+Coin toss.
+
+Winner starts first.
+Player Turn
+
+Every turn
+
+Open notebook.
+Get one number.
+
+Example
+
+2
+
+Now perform the action assigned to that number.
+
+Character Building
+
+Each number represents one soldier.
+0 -> Soldier A
+2 -> Soldier B
+4 -> Soldier C
+6 -> Soldier D
+8 -> Soldier E
+So every player can have 5 different soldiers.
+
+Each soldier grows independently.
+
+Example
+Player gets
+
+2
+2
+2
+2
+2
+2
+2
+2
+Only Soldier 2 grows.
+
+Growth Order
+
+Every time that number appears, next part is added.
+1 Head
+
+↓
+
+2 Body
+
+↓
+
+3 Legs
+
+↓
+
+4 Hands
+
+↓
+
+5 Gun
+
+↓
+
+6 Bullet 1
+
+↓
+
+7 Bullet 2
+
+↓
+
+8 Bullet 3
+
+↓
+
+9 Bullet 4
+
+↓
+
+10 Bullet 5
+
+↓
+
+11 Bullet 6
+After this
+
+Fully Ready Soldier
+Example
+
+Player 1 opens
+
+42
+43
+
+=2
+
+Draw
+
+Head
+
+Later
+
+again
+
+2
+
+Draw
+
+Body
+
+Again
+
+2
+
+Draw
+
+Legs
+
+Eventually
+
+Head
+Body
+Legs
+Hands
+Gun
+6 bullets
+
+Ready.
+
+Shooting
+
+Suppose Soldier 2 is fully ready.
+
+Player gets
+
+2
+
+again.
+
+Now instead of growing,
+
+the soldier SHOOTS.
+
+Choose one enemy soldier.
+
+One bullet is consumed.
+
+Bullets
+
+6 ->5 ->4 ->3 ->2 ->1 ->0
+Hit
+
+Every shot
+
+50% chance
+
+or
+
+Always hit
+
+depending on game design.
+
+If hit
+
+Enemy dies immediately.
+
+Or
+
+Enemy loses one life.
+
+Dead Soldier
+
+Dead soldier becomes
+
+❌
+
+Cannot move again.
+
+Exactly like your last image.
+
+Empty Gun
+
+When bullets become
+
+0
+
+Next time same number comes
+
+Reload
+
+instead of shooting.
+
+or
+
+Need 6 more turns to reload.
+
+Your choice.
+
+Maximum Soldiers
+
+One soldier per number.
+
+0
+
+2
+
+4
+
+6
+
+8
+
+Maximum
+
+5 soldiers
+
+per player.
+
+State Machine
+Empty
+
+↓
+
+Head
+
+↓
+
+Body
+
+↓
+
+Legs
+
+↓
+
+Hands
+
+↓
+
+Gun
+
+↓
+
+Bullet1
+
+↓
+
+Bullet2
+
+↓
+
+Bullet3
+
+↓
+
+Bullet4
+
+↓
+
+Bullet5
+
+↓
+
+Bullet6
+
+↓
+
+Ready
+
+↓
+
+Shoot
+
+↓
+
+Shoot
+
+↓
+
+Shoot
+
+↓
+
+Reload
+Data Structure (for implementation)
+
+Each player has:
+
+Player
+{
+    soldiers:{
+        0: Soldier,
+        2: Soldier,
+        4: Soldier,
+        6: Soldier,
+        8: Soldier
+    }
+}
+
+Each soldier:
+
+Soldier
+{
+    stage:0,      // 0-11
+    bullets:0,    // 0-6
+    alive:true
+}
+
+When a number is rolled:
+
+If stage < 11
+    stage++
+
+Else if bullets > 0
+    Shoot
+    bullets--
+
+Else
+    Reload bullets = 6
+As a software game, I'd modernize it slightly
+
+Instead of drawing stick figures manually, the game can automatically animate each stage:
+
+😊 Head appears.
+🧍 Body grows.
+🦵 Legs appear.
+💪 Arms appear.
+🔫 Gun appears.
+🔴 Bullets fill one by one.
+💥 Shooting animation.
+☠️ Enemy falls and gets a red ❌.
+🔄 Reload animation.
+
+This keeps the nostalgia of the notebook game while making it feel polished on mobile or the web.
+
+I think this would make an excellent casual game using Flutter (mobile), Godot (2D game), or React + Canvas (web), because the mechanics are simple but create suspense as each page turn can either grow a soldier or trigger an attack.

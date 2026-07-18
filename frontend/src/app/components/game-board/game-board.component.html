@@ -1,0 +1,158 @@
+﻿<div class="game-page">
+
+  <!-- Toast notification -->
+  <div *ngIf="notification" class="toast">{{ notification }}</div>
+
+  <!-- ── Top bar ─────────────────────────────────────────────────── -->
+  <div class="top-bar">
+    <div>
+      <div style="font-size:20px;font-weight:900;letter-spacing:-0.5px;">🔫 90s Gun Game</div>
+      <button (click)="copyRoomId()"
+        style="font-family:'Courier New',monospace;font-size:12px;color:#9ca3af;background:none;border:none;cursor:pointer;padding:0;display:flex;align-items:center;gap:4px;margin-top:2px;">
+        Room: <strong style="letter-spacing:0.2em;color:#1a1a1a;">{{ gameState?.roomId }}</strong>
+        <span>📋</span>
+      </button>
+    </div>
+    <div style="text-align:right;">
+      <div style="font-family:'Courier New',monospace;font-size:11px;color:#9ca3af;text-transform:uppercase;letter-spacing:0.08em;">
+        {{ gameState?.status?.replace('_',' ') }}
+      </div>
+      <div *ngIf="gameState?.status === 'playing' || gameState?.status === 'choosing_target'"
+        style="font-size:13px;font-weight:700;"
+        [style.color]="isMyTurn ? '#ea580c' : '#6b7280'">
+        {{ isMyTurn ? '⚡ Your turn' : (getCurrentTurnName() + "'s turn") }}
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Waiting for opponent ───────────────────────────────────── -->
+  <div *ngIf="gameState?.status === 'waiting'" class="overlay-panel">
+    <div style="font-size:48px;margin-bottom:12px;">⏳</div>
+    <h2 style="font-size:22px;font-weight:900;margin:0 0 8px;">Waiting for opponent…</h2>
+    <p style="color:#6b7280;font-size:14px;margin:0 0 16px;">Share this code with your friend:</p>
+    <button (click)="copyRoomId()"
+      style="font-size:28px;font-weight:900;letter-spacing:0.3em;color:#f97316;
+             background:#fff7ed;border:2.5px solid #fed7aa;border-radius:12px;
+             padding:12px 24px;cursor:pointer;font-family:'Courier New',monospace;">
+      {{ gameState?.roomId }}
+    </button>
+    <p style="color:#9ca3af;font-size:11px;font-family:'Courier New',monospace;margin-top:8px;">click to copy</p>
+  </div>
+
+  <!-- ── Coin toss ──────────────────────────────────────────────── -->
+  <div *ngIf="gameState?.status === 'coin_toss'" class="overlay-panel">
+
+    <!-- Coin result animation -->
+    <div *ngIf="coinResult"
+      style="font-size:20px;font-weight:700;color:#f97316;margin-bottom:16px;">
+      🪙 {{ coinResult }}
+    </div>
+
+    <ng-container *ngIf="!coinResult">
+      <div style="font-size:52px;margin-bottom:12px;">🪙</div>
+      <h2 style="font-size:20px;font-weight:900;margin:0 0 6px;">Coin Toss</h2>
+
+      <!-- Player 0 chooses -->
+      <ng-container *ngIf="myPlayerIndex === 0 && !coinChoice">
+        <p style="color:#6b7280;font-size:14px;margin:0 0 20px;">You go first — call it!</p>
+        <div style="display:flex;justify-content:center;gap:16px;">
+          <button class="btn btn-orange" style="padding:18px 28px;font-size:20px;min-width:130px;" (click)="chooseCoin('heads')">
+            🟡 Heads
+          </button>
+          <button class="btn btn-gray" style="padding:18px 28px;font-size:20px;min-width:130px;" (click)="chooseCoin('tails')">
+            ⚫ Tails
+          </button>
+        </div>
+      </ng-container>
+
+      <div *ngIf="myPlayerIndex === 0 && coinChoice"
+        style="color:#9ca3af;font-family:'Courier New',monospace;font-size:14px;">Flipping…</div>
+
+      <!-- Player 1 waits -->
+      <div *ngIf="myPlayerIndex === 1"
+        style="color:#6b7280;font-family:'Courier New',monospace;font-size:14px;">
+        Waiting for {{ gameState?.players?.[0]?.name }} to flip the coin…
+      </div>
+    </ng-container>
+  </div>
+
+  <!-- ── Active game (playing / choosing_target / finished) ─────── -->
+  <ng-container *ngIf="gameState?.status === 'playing' || gameState?.status === 'choosing_target' || gameState?.status === 'finished'">
+
+    <!-- Banners -->
+    <div *ngIf="isChoosingTarget" class="choose-banner">
+      🎯 Choose an enemy soldier to shoot! (click on their column)
+    </div>
+    <div *ngIf="isWaitingForOpponent" class="waiting-banner">
+      ⏳ Opponent is choosing a target…
+    </div>
+
+    <!-- ── 2-column layout: Board (left) | Book (right) ─────────── -->
+    <div class="game-layout">
+
+      <!-- LEFT: Game board + log -->
+      <div class="game-left">
+        <div class="board-wrap">
+          <div class="board-grid">
+            <div class="board-col-header p1">
+              {{ gameState?.players?.[0]?.name ?? 'Player 1' }}
+              <span *ngIf="myPlayerIndex === 0" style="font-weight:400;font-size:11px;color:#9a3412;"> (you)</span>
+            </div>
+            <div class="board-center-header"></div>
+            <div class="board-col-header p2">
+              {{ gameState?.players?.[1]?.name ?? 'Player 2' }}
+              <span *ngIf="myPlayerIndex === 1" style="font-weight:400;font-size:11px;color:#1e3a8a;"> (you)</span>
+            </div>
+            <ng-container *ngFor="let slot of soldierSlots">
+              <div class="board-cell left">
+                <app-soldier-cell [soldier]="getSoldier(0, slot)" [slotKey]="slot" [slotNumber]="slotNumbers[slot]"
+                  [isTargetable]="isTargetable(0, slot)" facing="right" (targetSelected)="shootTarget($event)"/>
+              </div>
+              <div class="board-center-cell">
+                <div class="divider-bar"><span></span></div>
+                <span class="slot-label">{{ slotNumbers[slot] }}</span>
+              </div>
+              <div class="board-cell">
+                <app-soldier-cell [soldier]="getSoldier(1, slot)" [slotKey]="slot" [slotNumber]="slotNumbers[slot]"
+                  [isTargetable]="isTargetable(1, slot)" facing="left" (targetSelected)="shootTarget($event)"/>
+              </div>
+            </ng-container>
+          </div>
+        </div>
+
+        <app-game-log [logs]="gameState?.log ?? []" />
+      </div>
+
+      <!-- RIGHT: Book flip -->
+      <div class="game-right">
+        <app-book-flip
+          [canFlip]="canRoll"
+          [lastResult]="lastRollResult"
+          [waitMessage]="isChoosingTarget ? 'Choose a target to shoot!' : (isWaitingForOpponent ? 'Opponent is shooting…' : '')"
+          (flipRequested)="roll()">
+        </app-book-flip>
+      </div>
+
+    </div><!-- /game-layout -->
+
+  </ng-container>
+
+  <!-- ── Game Over overlay ─────────────────────────────────────── -->
+  <div *ngIf="gameState?.status === 'finished'" class="winner-overlay">
+    <div class="winner-card">
+      <div style="font-size:64px;margin-bottom:8px;">
+        {{ gameState?.winner === myPlayerIndex ? '🏆' : '💀' }}
+      </div>
+      <h2 style="font-size:28px;font-weight:900;margin:0 0 8px;">
+        {{ gameState?.winner === myPlayerIndex ? 'YOU WIN!' : 'YOU LOSE!' }}
+      </h2>
+      <p style="color:#6b7280;font-size:14px;margin:0 0 24px;">
+        {{ gameState?.players?.[gameState?.winner ?? 0]?.name }} wins the game!
+      </p>
+      <button class="btn btn-orange" style="width:100%;padding:14px;font-size:16px;" (click)="newGame()">
+        🎮 Play Again
+      </button>
+    </div>
+  </div>
+
+</div>

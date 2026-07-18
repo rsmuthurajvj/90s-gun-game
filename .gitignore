@@ -1,0 +1,18 @@
+# 90s Gun Game — root .gitignore
+
+# Both workspaces
+node_modules/
+dist/
+.angular/
+
+# Secrets — never commit
+backend/.env
+.env
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
