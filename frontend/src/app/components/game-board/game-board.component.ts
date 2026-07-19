@@ -25,6 +25,8 @@ export class GameBoardComponent implements OnInit, OnDestroy {
   /** Separate state used only for rendering soldiers — updates after the flip animation */
   displayedGameState: GameState | null = null;
   private pendingDisplayUpdate = false;
+  /** True while the local player is waiting for their own roll result */
+  private iAmRolling = false;
   myPlayerIndex = -1;
   notification = '';
   /** Wrapped object so Angular always fires the book setter, even for repeated numbers.
@@ -100,21 +102,34 @@ export class GameBoardComponent implements OnInit, OnDestroy {
         if (type === 'ROLL_RESULT') {
           const d = data as { rolledNum: number; action: string; gameState: GameState };
           this.rollSeq++;
-          // animate: true — live roll, both players see the flip animation
-          this.lastRollResult = { value: d.rolledNum, seq: this.rollSeq, animate: true };
-          // Block the visual board update until the animation finishes.
-          // This must be set BEFORE gameState$ fires (guaranteed by service emit order).
-          this.pendingDisplayUpdate = true;
-          this.flipInProgress = true;
-          setTimeout(() => {
-            this.pendingDisplayUpdate = false;
-            this.flipInProgress = false;
-            // Now reveal the new soldier stages / bullet counts
-            this.displayedGameState = this.gameState;
-            this.cdr.markForCheck();
-          }, 1900);
-          // Toast appears at the end of the animation for both players
-          this.showResultToast(d.gameState, 1800);
+
+          const wasRoller = this.iAmRolling;
+          this.iAmRolling = false;
+
+          // Only the player who clicked the button sees the flip animation.
+          // The opponent receives the result after a server-side delay and
+          // their book just shows the number — no animation.
+          this.lastRollResult = { value: d.rolledNum, seq: this.rollSeq, animate: wasRoller };
+
+          if (wasRoller) {
+            // Block the visual board update until the animation finishes.
+            // pendingDisplayUpdate must be set BEFORE gameState$ fires.
+            this.pendingDisplayUpdate = true;
+            this.flipInProgress = true;
+            setTimeout(() => {
+              this.pendingDisplayUpdate = false;
+              this.flipInProgress = false;
+              this.displayedGameState = this.gameState;
+              this.cdr.markForCheck();
+            }, 1900);
+            // Toast appears at the end of the animation
+            this.showResultToast(d.gameState, 1800);
+          } else {
+            // Opponent: result arrives after server delay — show toast immediately.
+            // displayedGameState will be updated by the gameState$ subscriber
+            // (pendingDisplayUpdate is false so it won't be blocked).
+            this.showResultToast(d.gameState, 0);
+          }
         }
         if (type === 'SHOOT_RESULT') {
           const d = data as { gameState: GameState };
@@ -199,6 +214,7 @@ export class GameBoardComponent implements OnInit, OnDestroy {
 
   roll(): void {
     if (this.canRoll) {
+      this.iAmRolling = true;
       this.gameService.roll(this.roomId);
     }
   }
