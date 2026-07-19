@@ -104,6 +104,8 @@ export class GameService implements OnDestroy {
       case 'opponent_choosing':
         this._gameState$.next(data['gameState'] as GameState);
         this._notification$.next('Opponent is choosing a target…');
+        // Also emit ROLL_RESULT so the opponent's book flip shows the number
+        this._lastAction$.next({ type: 'ROLL_RESULT', data });
         break;
 
       case 'shoot_result':

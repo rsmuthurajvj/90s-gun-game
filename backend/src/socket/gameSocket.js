@@ -212,7 +212,13 @@ function initSocket(io) {
           });
           game.currentTurn = playerIndex === 0 ? 1 : 0;
           await game.save();
-          io.to(roomId).emit('roll_result', { rolledNum, action, gameState: formatGame(game) });
+
+          // Send to roller immediately
+          socket.emit('roll_result', { rolledNum, action, gameState: formatGame(game) });
+          // Send to opponent after a delay
+          setTimeout(() => {
+            socket.to(roomId).emit('roll_result', { rolledNum, action, gameState: formatGame(game) });
+          }, 2000);
           return;
         }
 
@@ -226,7 +232,13 @@ function initSocket(io) {
           });
           game.currentTurn = playerIndex === 0 ? 1 : 0;
           await game.save();
-          io.to(roomId).emit('roll_result', { rolledNum, action, gameState: formatGame(game) });
+          
+          // Send to roller immediately
+          socket.emit('roll_result', { rolledNum, action, gameState: formatGame(game) });
+          // Send to opponent after a delay
+          setTimeout(() => {
+            socket.to(roomId).emit('roll_result', { rolledNum, action, gameState: formatGame(game) });
+          }, 2000);
 
         } else if (soldier.stage === 5) {
           // Gun already present → load ALL 6 bullets at once on this single roll
@@ -239,7 +251,13 @@ function initSocket(io) {
           });
           game.currentTurn = playerIndex === 0 ? 1 : 0;
           await game.save();
-          io.to(roomId).emit('roll_result', { rolledNum, action, gameState: formatGame(game) });
+          
+          // Send to roller immediately
+          socket.emit('roll_result', { rolledNum, action, gameState: formatGame(game) });
+          // Send to opponent after a delay
+          setTimeout(() => {
+            socket.to(roomId).emit('roll_result', { rolledNum, action, gameState: formatGame(game) });
+          }, 2000);
 
         } else if (soldier.bullets > 0) {
           // SHOOT phase – wait for target selection
@@ -248,10 +266,16 @@ function initSocket(io) {
           game.pendingShooterSlot = slot;
           await game.save();
 
-          // Ask the current player to pick a target
-          socket.emit('choose_target', { rolledNum, gameState: formatGame(game) });
-          // Inform opponent they must wait
-          socket.to(roomId).emit('opponent_choosing', { rolledNum, gameState: formatGame(game) });
+          // Send roll_result to roller immediately so the book flip shows the number
+          socket.emit('roll_result', { rolledNum, action, gameState: formatGame(game) });
+          // After animation, tell roller to pick a target
+          setTimeout(() => {
+            socket.emit('choose_target', { rolledNum, gameState: formatGame(game) });
+          }, 2000);
+          // After animation, inform opponent they must wait
+          setTimeout(() => {
+            socket.to(roomId).emit('opponent_choosing', { rolledNum, action, gameState: formatGame(game) });
+          }, 2000);
 
         } else {
           // RELOAD phase
@@ -263,7 +287,13 @@ function initSocket(io) {
           });
           game.currentTurn = playerIndex === 0 ? 1 : 0;
           await game.save();
-          io.to(roomId).emit('roll_result', { rolledNum, action, gameState: formatGame(game) });
+
+          // Send to roller immediately
+          socket.emit('roll_result', { rolledNum, action, gameState: formatGame(game) });
+          // Send to opponent after a delay
+          setTimeout(() => {
+            socket.to(roomId).emit('roll_result', { rolledNum, action, gameState: formatGame(game) });
+          }, 2000);
         }
       } catch (err) {
         console.error('[roll]', err);

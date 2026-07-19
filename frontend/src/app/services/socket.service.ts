@@ -10,7 +10,7 @@ export interface SocketEvent {
 @Injectable({ providedIn: 'root' })
 export class SocketService implements OnDestroy {
   private socket!: Socket;
-  private readonly serverUrl = 'http://localhost:3000';
+  private readonly serverUrl = 'https://nine0s-gun-game.onrender.com'; // 'http://localhost:3000';
 
   /** All incoming socket events are pushed here */
   readonly events$ = new Subject<SocketEvent>();

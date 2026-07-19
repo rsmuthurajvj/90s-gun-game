@@ -90,6 +90,12 @@ export class GameBoardComponent implements OnInit, OnDestroy {
           const d = data as { rolledNum: number; action: string; gameState: GameState };
           this.rollSeq++;
           this.lastRollResult = { value: d.rolledNum, seq: this.rollSeq };
+          // Start the flip-in-progress timer here (when result arrives) not at click time
+          this.flipInProgress = true;
+          setTimeout(() => {
+            this.flipInProgress = false;
+            this.cdr.markForCheck();
+          }, 1900);
           // Toast after book-flip animation (~1.8 s for own roll, quick for opponent)
           const isMine = d.gameState.currentTurn !== this.myPlayerIndex;
           const toastDelay = isMine ? 1800 : 400;
@@ -176,12 +182,6 @@ export class GameBoardComponent implements OnInit, OnDestroy {
 
   roll(): void {
     if (this.canRoll) {
-      // Mark flip in progress — suppress choosing_target UI for 1.9s (animation duration)
-      this.flipInProgress = true;
-      setTimeout(() => {
-        this.flipInProgress = false;
-        this.cdr.markForCheck();
-      }, 1900);
       this.gameService.roll(this.roomId);
     }
   }

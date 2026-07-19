@@ -4,13 +4,16 @@ require('dotenv').config();
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
-const cors = require('cors');
 const mongoose = require('mongoose');
 const gameRoutes = require('./routes/game');
 const { initSocket } = require('./socket/gameSocket');
 const errorHandler = require('./middleware/errorHandler');
+const cors = require('cors');
 
 const app = express();
+app.use(express.json());
+app.use(cors());
+
 const server = http.createServer(app);
 
 const allowedOrigin = process.env.FRONTEND_URL || 'http://localhost:4200';
@@ -18,9 +21,6 @@ const allowedOrigin = process.env.FRONTEND_URL || 'http://localhost:4200';
 const io = new Server(server, {
   cors: { origin: allowedOrigin, methods: ['GET', 'POST'] }
 });
-
-app.use(cors({ origin: allowedOrigin }));
-app.use(express.json());
 
 // MongoDB connection
 mongoose
