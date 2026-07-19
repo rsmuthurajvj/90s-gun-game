@@ -22,6 +22,9 @@ import { BookFlipComponent } from '../book-flip/book-flip.component';
 })
 export class GameBoardComponent implements OnInit, OnDestroy {
   gameState: GameState | null = null;
+  /** Separate state used only for rendering soldiers — updates after the flip animation */
+  displayedGameState: GameState | null = null;
+  private pendingDisplayUpdate = false;
   myPlayerIndex = -1;
   notification = '';
   /** Wrapped object so Angular always fires the book setter, even for repeated numbers */
@@ -76,6 +79,12 @@ export class GameBoardComponent implements OnInit, OnDestroy {
           this.rollSeq++;
           this.lastRollResult = { value: state.lastRoll, seq: this.rollSeq };
         }
+        // Only update the visual board if no flip animation is in progress.
+        // pendingDisplayUpdate is set by the ROLL_RESULT handler (which fires
+        // before this subscriber due to the order swap in the service).
+        if (!this.pendingDisplayUpdate) {
+          this.displayedGameState = state;
+        }
         this.cdr.markForCheck();
       }),
 
@@ -90,16 +99,19 @@ export class GameBoardComponent implements OnInit, OnDestroy {
           const d = data as { rolledNum: number; action: string; gameState: GameState };
           this.rollSeq++;
           this.lastRollResult = { value: d.rolledNum, seq: this.rollSeq };
-          // Start the flip-in-progress timer here (when result arrives) not at click time
+          // Block the visual board update until the animation finishes.
+          // This must be set BEFORE gameState$ fires (guaranteed by service emit order).
+          this.pendingDisplayUpdate = true;
           this.flipInProgress = true;
           setTimeout(() => {
+            this.pendingDisplayUpdate = false;
             this.flipInProgress = false;
+            // Now reveal the new soldier stages / bullet counts
+            this.displayedGameState = this.gameState;
             this.cdr.markForCheck();
           }, 1900);
-          // Toast after book-flip animation (~1.8 s for own roll, quick for opponent)
-          const isMine = d.gameState.currentTurn !== this.myPlayerIndex;
-          const toastDelay = isMine ? 1800 : 400;
-          this.showResultToast(d.gameState, toastDelay);
+          // Toast appears at the end of the animation for both players
+          this.showResultToast(d.gameState, 1800);
         }
         if (type === 'SHOOT_RESULT') {
           const d = data as { gameState: GameState };
@@ -117,6 +129,7 @@ export class GameBoardComponent implements OnInit, OnDestroy {
 
     // Sync initial state from service (in case we already have it)
     this.gameState = this.gameService.getGameState();
+    this.displayedGameState = this.gameService.getGameState();
   }
 
   // ── Derived helpers ─────────────────────────────────────────────────────────
@@ -155,8 +168,9 @@ export class GameBoardComponent implements OnInit, OnDestroy {
 
   getSoldier(playerIndex: number, slot: string): Soldier {
     const fallback: Soldier = { stage: 0, bullets: 0, alive: true };
-    if (!this.gameState) return fallback;
-    const player = this.gameState.players[playerIndex];
+    // Use displayedGameState so soldiers only update AFTER the flip animation
+    if (!this.displayedGameState) return fallback;
+    const player = this.displayedGameState.players[playerIndex];
     if (!player) return fallback;
     return player.soldiers[slot as keyof SoldierMap] ?? fallback;
   }

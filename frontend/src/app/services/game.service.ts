@@ -91,8 +91,10 @@ export class GameService implements OnDestroy {
         break;
 
       case 'roll_result':
-        this._gameState$.next(data['gameState'] as GameState);
+        // Emit lastAction$ FIRST so the component can set pendingDisplayUpdate
+        // before the gameState$ subscriber fires and re-renders soldiers.
         this._lastAction$.next({ type: 'ROLL_RESULT', data });
+        this._gameState$.next(data['gameState'] as GameState);
         break;
 
       case 'choose_target':
@@ -102,10 +104,10 @@ export class GameService implements OnDestroy {
         break;
 
       case 'opponent_choosing':
+        // Emit lastAction$ FIRST (same reason as roll_result)
+        this._lastAction$.next({ type: 'ROLL_RESULT', data });
         this._gameState$.next(data['gameState'] as GameState);
         this._notification$.next('Opponent is choosing a target…');
-        // Also emit ROLL_RESULT so the opponent's book flip shows the number
-        this._lastAction$.next({ type: 'ROLL_RESULT', data });
         break;
 
       case 'shoot_result':
