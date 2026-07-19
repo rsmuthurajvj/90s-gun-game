@@ -27,8 +27,9 @@ export class GameBoardComponent implements OnInit, OnDestroy {
   private pendingDisplayUpdate = false;
   myPlayerIndex = -1;
   notification = '';
-  /** Wrapped object so Angular always fires the book setter, even for repeated numbers */
-  lastRollResult: { value: number; seq: number } | null = null;
+  /** Wrapped object so Angular always fires the book setter, even for repeated numbers.
+   *  animate=true triggers the flip animation; animate=false is for reconnect seeds. */
+  lastRollResult: { value: number; seq: number; animate?: boolean } | null = null;
   private rollSeq = 0;
   rollPopAnim = false;
   coinChoice: 'heads' | 'tails' | null = null;
@@ -77,7 +78,8 @@ export class GameBoardComponent implements OnInit, OnDestroy {
           this.lastRollResult === null
         ) {
           this.rollSeq++;
-          this.lastRollResult = { value: state.lastRoll, seq: this.rollSeq };
+          // animate: false — reconnect seed, show without animation
+          this.lastRollResult = { value: state.lastRoll, seq: this.rollSeq, animate: false };
         }
         // Only update the visual board if no flip animation is in progress.
         // pendingDisplayUpdate is set by the ROLL_RESULT handler (which fires
@@ -98,7 +100,8 @@ export class GameBoardComponent implements OnInit, OnDestroy {
         if (type === 'ROLL_RESULT') {
           const d = data as { rolledNum: number; action: string; gameState: GameState };
           this.rollSeq++;
-          this.lastRollResult = { value: d.rolledNum, seq: this.rollSeq };
+          // animate: true — live roll, both players see the flip animation
+          this.lastRollResult = { value: d.rolledNum, seq: this.rollSeq, animate: true };
           // Block the visual board update until the animation finishes.
           // This must be set BEFORE gameState$ fires (guaranteed by service emit order).
           this.pendingDisplayUpdate = true;

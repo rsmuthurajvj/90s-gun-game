@@ -90,11 +90,24 @@ const PAGE_POOLS: Record<number, number[]> = {
 export class BookFlipComponent implements OnChanges {
   @Input() canFlip = false;
   @Input() waitMessage = '';
-  /** Wrapped in { value, seq } so the setter fires even when the same number is rolled twice */
-  @Input() set lastResult(val: { value: number; seq: number } | null) {
+  /** Wrapped in { value, seq, animate } so the setter fires even for repeated rolls.
+   *  animate=true  → start flip if not already flipping (covers the opponent's view)
+   *  animate=false → show the result immediately (reconnect / seed)
+   */
+  @Input() set lastResult(val: { value: number; seq: number; animate?: boolean } | null) {
     if (!val) return;
     const num = val.value;
-    // Reveal mid-way through the final flip (~1.55 s into the animation)
+
+    // For the opponent (or anyone who didn't click the button),
+    // kick off the flip animation now so both players see it.
+    if (val.animate && !this.isFlipping) {
+      this.isFlipping = true;
+      this.isRevealed = false;
+      this.currentResult = null;
+      this.cdr.markForCheck();
+    }
+
+    // Reveal mid-way through the final flip (~1.55 s), or instantly for seeds
     const delay = this.isFlipping ? 1550 : 0;
     setTimeout(() => {
       const pool = PAGE_POOLS[num] ?? [42];
