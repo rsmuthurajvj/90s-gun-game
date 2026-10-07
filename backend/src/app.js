@@ -1,6 +1,7 @@
 'use strict';
 
 require('dotenv').config();
+const path = require('path');
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -10,19 +11,23 @@ const { initSocket } = require('./socket/gameSocket');
 const errorHandler = require('./middleware/errorHandler');
 const cors = require('cors');
 
+// FRONTEND_URL may be a comma-separated list. The Capacitor Android app
+// serves its files from https://localhost, so that origin is always allowed.
+const allowedOrigins = [
+  ...(process.env.FRONTEND_URL || 'http://localhost:4200').split(',').map((s) => s.trim()).filter(Boolean),
+  'https://localhost',
+  'http://localhost',
+  'capacitor://localhost'
+];
+const corsOptions = { origin: allowedOrigins, methods: ['GET', 'POST'] };
+
 const app = express();
-app.use(express.json());
-app.use(cors());
+app.use(express.json({ limit: '10kb' }));
+app.use(cors(corsOptions));
 
 const server = http.createServer(app);
+const io = new Server(server, { cors: corsOptions, pingInterval: 10000, pingTimeout: 8000 });
 
-const allowedOrigin = process.env.FRONTEND_URL || 'http://localhost:4200';
-
-const io = new Server(server, {
-  cors: { origin: allowedOrigin, methods: ['GET', 'POST'] }
-});
-
-// MongoDB connection
 mongoose
   .connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/90sgungame')
   .then(() => console.log('✅ MongoDB connected'))
@@ -31,13 +36,17 @@ mongoose
     process.exit(1);
   });
 
-// REST routes
+// The app pings this when the online lobby opens, so a sleeping free-tier
+// server starts waking up before the player taps "Create".
+app.get('/health', (req, res) => res.json({ ok: true }));
+
+// Publicly hosted static pages (e.g. /privacy.html for the Play Store listing).
+app.use(express.static(path.join(__dirname, '..', 'public')));
+
 app.use('/api/games', gameRoutes);
 
-// Socket.io
 initSocket(io);
 
-// Global error handler (must be last)
 app.use(errorHandler);
 
 const PORT = parseInt(process.env.PORT, 10) || 3000;

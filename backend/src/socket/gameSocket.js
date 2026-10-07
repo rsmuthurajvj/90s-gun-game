@@ -1,51 +1,51 @@
 'use strict';
 
-const { v4: uuidv4 } = require('uuid');
+const crypto = require('crypto');
 const Game = require('../models/Game');
+const engine = require('../game/engine');
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// Room codes avoid look-alike characters (0/O, 1/I/L) so they are easy to read out.
+const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+const CODE_LENGTH = 6;
+const NAME_MAX = 20;
 
-const VALID_SLOTS = ['s0', 's2', 's4', 's6', 's8'];
-const SLOT_NUMBERS = { s0: 0, s2: 2, s4: 4, s6: 6, s8: 8 };
-
-const STAGE_NAMES = {
-  1: 'Head', 2: 'Body', 3: 'Legs', 4: 'Arms', 5: 'Gun',
-  6: 'Bullet 1', 7: 'Bullet 2', 8: 'Bullet 3',
-  9: 'Bullet 4', 10: 'Bullet 5', 11: 'Bullet 6 (READY!)'
-};
-
-function slotKey(num) {
-  return `s${num}`;
+function newRoomCode() {
+  let code = '';
+  for (let i = 0; i < CODE_LENGTH; i++) code += CODE_ALPHABET[crypto.randomInt(CODE_ALPHABET.length)];
+  return code;
 }
 
-function numToSlot(n) {
-  return `s${n}`;
+function cleanName(name) {
+  if (typeof name !== 'string') return '';
+  return name.replace(/\s+/g, ' ').trim().substring(0, NAME_MAX);
 }
 
-function rollNumber() {
-  const values = [0, 2, 4, 6, 8];
-  return values[Math.floor(Math.random() * values.length)];
+function cleanRoomId(roomId) {
+  return typeof roomId === 'string' ? roomId.toUpperCase().trim() : '';
 }
 
-/** Serialise a game doc to a plain object safe to send to clients. */
+/** Public view of a game: never includes socket ids or reconnect tokens. */
 function formatGame(game) {
   return {
     roomId: game.roomId,
     status: game.status,
+    rules: engine.normaliseRules(game.rules),
     players: game.players.map((p) => ({
       name: p.name,
-      soldiers: {
-        s0: p.soldiers.s0.toObject ? p.soldiers.s0.toObject() : p.soldiers.s0,
-        s2: p.soldiers.s2.toObject ? p.soldiers.s2.toObject() : p.soldiers.s2,
-        s4: p.soldiers.s4.toObject ? p.soldiers.s4.toObject() : p.soldiers.s4,
-        s6: p.soldiers.s6.toObject ? p.soldiers.s6.toObject() : p.soldiers.s6,
-        s8: p.soldiers.s8.toObject ? p.soldiers.s8.toObject() : p.soldiers.s8
-      }
+      connected: p.connected,
+      score: p.score || 0,
+      soldiers: engine.SLOTS.reduce((acc, s) => {
+        const { stage, bullets, alive } = p.soldiers[s];
+        acc[s] = { stage, bullets, alive };
+        return acc;
+      }, {})
     })),
     currentTurn: game.currentTurn,
     lastRoll: game.lastRoll,
     pendingShooterSlot: game.pendingShooterSlot,
     winner: game.winner,
+    round: game.round || 1,
+    rematchVotes: [...(game.rematchVotes || [false, false])],
     log: game.log.slice(-30).map((l) => ({
       message: l.message,
       playerIndex: l.playerIndex,
@@ -54,327 +54,199 @@ function formatGame(game) {
   };
 }
 
-function allSoldiersDeadFor(game, playerIndex) {
-  const soldiers = game.players[playerIndex].soldiers;
-  return VALID_SLOTS.every((s) => !soldiers[s].alive);
-}
+// ── Per-room serial queue ────────────────────────────────────────────────────
+// Every mutation is load → change → save. Without serialising, two quick
+// events for the same room (double tap, both players acting) could read the
+// same document and overwrite each other.
+const roomQueues = new Map();
 
-// ── Socket initialiser ────────────────────────────────────────────────────────
+function withRoom(roomId, task) {
+  const prev = roomQueues.get(roomId) || Promise.resolve();
+  const next = prev.catch(() => {}).then(task);
+  roomQueues.set(roomId, next);
+  next.finally(() => {
+    if (roomQueues.get(roomId) === next) roomQueues.delete(roomId);
+  }).catch(() => {});
+  return next;
+}
 
 function initSocket(io) {
   io.on('connection', (socket) => {
-    console.log(`[Socket] connected: ${socket.id}`);
+    const fail = (message) => socket.emit('game_error', { message });
+
+    /**
+     * Wraps a handler that acts on an existing room as the calling player.
+     * Resolves the player's seat from the socket, serialises per room and
+     * reports engine errors back to the caller.
+     */
+    const onRoom = (event, handler) => {
+      socket.on(event, (payload = {}) => {
+        const roomId = cleanRoomId(payload.roomId);
+        if (!roomId) return fail('Missing room code.');
+        withRoom(roomId, async () => {
+          const game = await Game.findOne({ roomId });
+          if (!game) return fail('Game not found. It may have expired.');
+          const playerIndex = game.players.findIndex((p) => p.socketId === socket.id);
+          if (playerIndex === -1) return fail('You are not in this game. Try reopening it.');
+          await handler(game, playerIndex, payload);
+        }).catch((err) => {
+          if (err instanceof engine.GameError) return fail(err.message);
+          console.error(`[${event}]`, err);
+          fail('Something went wrong. Please try again.');
+        });
+      });
+    };
+
+    const remember = (roomId, playerIndex) => {
+      socket.data.roomId = roomId;
+      socket.data.playerIndex = playerIndex;
+    };
 
     // ── create_game ───────────────────────────────────────────────────────────
-    socket.on('create_game', async ({ playerName }) => {
+    socket.on('create_game', async ({ playerName, rules } = {}) => {
       try {
-        if (!playerName || typeof playerName !== 'string') {
-          return socket.emit('error', { message: 'Invalid player name.' });
-        }
-        const sanitised = playerName.trim().substring(0, 30);
-        const roomId = uuidv4().replace(/-/g, '').substring(0, 8).toUpperCase();
+        const name = cleanName(playerName);
+        if (!name) return fail('Please enter your name.');
 
+        let roomId = newRoomCode();
+        while (await Game.exists({ roomId })) roomId = newRoomCode();
+
+        const token = crypto.randomUUID();
         const game = new Game({
           roomId,
-          players: [{ socketId: socket.id, name: sanitised }],
+          rules: engine.normaliseRules(rules),
+          players: [{ socketId: socket.id, token, name }],
           status: 'waiting'
         });
+        game.log.push({ message: `${name} created the room.`, playerIndex: 0 });
         await game.save();
 
         socket.join(roomId);
-        socket.emit('game_created', {
-          roomId,
-          playerIndex: 0,
-          gameState: formatGame(game)
-        });
+        remember(roomId, 0);
+        socket.emit('game_created', { playerIndex: 0, token, gameState: formatGame(game) });
       } catch (err) {
         console.error('[create_game]', err);
-        socket.emit('error', { message: 'Could not create game.' });
+        fail('Could not create a game. Please try again.');
       }
     });
 
     // ── join_game ─────────────────────────────────────────────────────────────
-    socket.on('join_game', async ({ roomId, playerName }) => {
-      try {
-        if (!roomId || !playerName) {
-          return socket.emit('error', { message: 'Room ID and name are required.' });
-        }
-        const sanitised = playerName.trim().substring(0, 30);
-        const game = await Game.findOne({ roomId: roomId.toUpperCase().trim() });
+    socket.on('join_game', ({ roomId: rawRoom, playerName } = {}) => {
+      const roomId = cleanRoomId(rawRoom);
+      const name = cleanName(playerName);
+      if (!roomId || !name) return fail('Room code and name are required.');
 
-        if (!game) return socket.emit('error', { message: 'Game not found.' });
-        if (game.players.length >= 2) return socket.emit('error', { message: 'Game is full.' });
-        if (game.status !== 'waiting') return socket.emit('error', { message: 'Game already started.' });
+      withRoom(roomId, async () => {
+        const game = await Game.findOne({ roomId });
+        if (!game) return fail('No game with that code.');
+        if (game.players.length >= 2) return fail('That game is already full.');
 
-        game.players.push({ socketId: socket.id, name: sanitised });
+        const token = crypto.randomUUID();
+        game.players.push({ socketId: socket.id, token, name });
         game.status = 'coin_toss';
+        game.log.push({ message: `${name} joined. Time for the coin toss!`, playerIndex: 1 });
         await game.save();
 
         socket.join(roomId);
-
-        // Tell the joining player their index
-        socket.emit('game_joined', {
-          playerIndex: 1,
-          gameState: formatGame(game)
-        });
-
-        // Tell player 1 someone joined
-        socket.to(roomId).emit('opponent_joined', {
-          opponentName: sanitised,
-          gameState: formatGame(game)
-        });
-      } catch (err) {
+        remember(roomId, 1);
+        socket.emit('game_joined', { playerIndex: 1, token, gameState: formatGame(game) });
+        socket.to(roomId).emit('state', { reason: 'opponent_joined', gameState: formatGame(game) });
+      }).catch((err) => {
         console.error('[join_game]', err);
-        socket.emit('error', { message: 'Could not join game.' });
-      }
+        fail('Could not join the game.');
+      });
     });
 
-    // ── rejoin_game (reconnect) ────────────────────────────────────────────────
-    socket.on('rejoin_game', async ({ roomId, playerIndex }) => {
-      try {
+    // ── rejoin_game: after refresh, app restart or network drop ──────────────
+    socket.on('rejoin_game', ({ roomId: rawRoom, token } = {}) => {
+      const roomId = cleanRoomId(rawRoom);
+      if (!roomId || typeof token !== 'string') return fail('Cannot reconnect to that game.');
+
+      withRoom(roomId, async () => {
         const game = await Game.findOne({ roomId });
-        if (!game) return socket.emit('error', { message: 'Game not found.' });
-        if (playerIndex !== 0 && playerIndex !== 1) return;
-        if (!game.players[playerIndex]) return socket.emit('error', { message: 'Slot not found.' });
+        if (!game) return socket.emit('rejoin_failed', { message: 'That game has expired.' });
+        const playerIndex = game.players.findIndex((p) => p.token === token);
+        if (playerIndex === -1) return socket.emit('rejoin_failed', { message: 'You are not part of that game.' });
 
         game.players[playerIndex].socketId = socket.id;
+        game.players[playerIndex].connected = true;
         await game.save();
 
         socket.join(roomId);
+        remember(roomId, playerIndex);
         socket.emit('rejoined', { playerIndex, gameState: formatGame(game) });
-      } catch (err) {
+        socket.to(roomId).emit('state', { reason: 'opponent_back', gameState: formatGame(game) });
+      }).catch((err) => {
         console.error('[rejoin_game]', err);
-        socket.emit('error', { message: 'Rejoin failed.' });
-      }
+        fail('Reconnect failed.');
+      });
     });
 
     // ── coin_toss ─────────────────────────────────────────────────────────────
-    // Only player 1 (index 0) initiates the toss; player 2 just watches.
-    socket.on('coin_toss', async ({ roomId, choice }) => {
-      try {
-        const game = await Game.findOne({ roomId });
-        if (!game || game.status !== 'coin_toss') return;
-
-        const playerIndex = game.players.findIndex((p) => p.socketId === socket.id);
-        if (playerIndex !== 0) return; // Only player 1 chooses
-
-        const validChoices = ['heads', 'tails'];
-        if (!validChoices.includes(choice)) return;
-
-        const result = Math.random() < 0.5 ? 'heads' : 'tails';
-        const winner = choice === result ? 0 : 1;
-
-        game.currentTurn = winner;
-        game.status = 'playing';
-        game.log.push({
-          message: `Coin landed on ${result}. ${game.players[winner].name} goes first!`,
-          playerIndex: winner
-        });
-        await game.save();
-
-        io.to(roomId).emit('coin_toss_result', {
-          result,
-          choice,
-          winnerIndex: winner,
-          winnerName: game.players[winner].name,
-          gameState: formatGame(game)
-        });
-      } catch (err) {
-        console.error('[coin_toss]', err);
-        socket.emit('error', { message: 'Coin toss failed.' });
-      }
+    onRoom('coin_toss', async (game, playerIndex, { choice }) => {
+      const outcome = engine.coinToss(game, playerIndex, choice);
+      await game.save();
+      io.to(game.roomId).emit('coin_result', { ...outcome, gameState: formatGame(game) });
     });
 
     // ── roll ──────────────────────────────────────────────────────────────────
-    socket.on('roll', async ({ roomId }) => {
-      try {
-        const game = await Game.findOne({ roomId });
-        if (!game || game.status !== 'playing') return;
-
-        const playerIndex = game.players.findIndex((p) => p.socketId === socket.id);
-        if (playerIndex === -1 || playerIndex !== game.currentTurn) {
-          return socket.emit('error', { message: 'Not your turn.' });
-        }
-
-        const rolledNum = rollNumber();
-        const slot = numToSlot(rolledNum);
-        game.lastRoll = rolledNum;
-
-        const soldier = game.players[playerIndex].soldiers[slot];
-        let action = '';
-
-        // ── Dead soldier: skip — turn passes to opponent ───────────────────────
-        if (!soldier.alive) {
-          action = 'DEAD';
-          game.log.push({
-            message: `${game.players[playerIndex].name} rolled ${rolledNum} → Soldier ${rolledNum} is dead. Turn skipped.`,
-            playerIndex
-          });
-          game.currentTurn = playerIndex === 0 ? 1 : 0;
-          await game.save();
-
-          // Send to roller immediately
-          socket.emit('roll_result', { rolledNum, action, gameState: formatGame(game) });
-          // Send to opponent after a delay
-          setTimeout(() => {
-            socket.to(roomId).emit('roll_result', { rolledNum, action, gameState: formatGame(game) });
-          }, 2000);
-          return;
-        }
-
-        if (soldier.stage < 5) {
-          // GROW phase: head → body → legs → arms → gun (stages 1-5)
-          soldier.stage += 1;
-          action = 'GROW';
-          game.log.push({
-            message: `${game.players[playerIndex].name} rolled ${rolledNum} → Soldier ${rolledNum} grew a ${STAGE_NAMES[soldier.stage]}`,
-            playerIndex
-          });
-          game.currentTurn = playerIndex === 0 ? 1 : 0;
-          await game.save();
-          
-          // Send to roller immediately
-          socket.emit('roll_result', { rolledNum, action, gameState: formatGame(game) });
-          // Send to opponent after a delay
-          setTimeout(() => {
-            socket.to(roomId).emit('roll_result', { rolledNum, action, gameState: formatGame(game) });
-          }, 2000);
-
-        } else if (soldier.stage === 5) {
-          // Gun already present → load ALL 6 bullets at once on this single roll
-          soldier.stage = 11;
-          soldier.bullets = 6;
-          action = 'LOADED';
-          game.log.push({
-            message: `${game.players[playerIndex].name} rolled ${rolledNum} → Soldier ${rolledNum} LOADED all 6 bullets instantly! 🔫`,
-            playerIndex
-          });
-          game.currentTurn = playerIndex === 0 ? 1 : 0;
-          await game.save();
-          
-          // Send to roller immediately
-          socket.emit('roll_result', { rolledNum, action, gameState: formatGame(game) });
-          // Send to opponent after a delay
-          setTimeout(() => {
-            socket.to(roomId).emit('roll_result', { rolledNum, action, gameState: formatGame(game) });
-          }, 2000);
-
-        } else if (soldier.bullets > 0) {
-          // SHOOT phase – wait for target selection
-          action = 'SHOOT';
-          game.status = 'choosing_target';
-          game.pendingShooterSlot = slot;
-          await game.save();
-
-          // Send roll_result to roller immediately so the book flip shows the number
-          socket.emit('roll_result', { rolledNum, action, gameState: formatGame(game) });
-          // After animation, tell roller to pick a target
-          setTimeout(() => {
-            socket.emit('choose_target', { rolledNum, gameState: formatGame(game) });
-          }, 2000);
-          // After animation, inform opponent they must wait
-          setTimeout(() => {
-            socket.to(roomId).emit('opponent_choosing', { rolledNum, action, gameState: formatGame(game) });
-          }, 2000);
-
-        } else {
-          // RELOAD phase
-          action = 'RELOAD';
-          soldier.bullets = 6;
-          game.log.push({
-            message: `${game.players[playerIndex].name} rolled ${rolledNum} → Soldier ${rolledNum} RELOADED (6 bullets)!`,
-            playerIndex
-          });
-          game.currentTurn = playerIndex === 0 ? 1 : 0;
-          await game.save();
-
-          // Send to roller immediately
-          socket.emit('roll_result', { rolledNum, action, gameState: formatGame(game) });
-          // Send to opponent after a delay
-          setTimeout(() => {
-            socket.to(roomId).emit('roll_result', { rolledNum, action, gameState: formatGame(game) });
-          }, 2000);
-        }
-      } catch (err) {
-        console.error('[roll]', err);
-        socket.emit('error', { message: 'Roll failed.' });
-      }
+    // Result goes to both players at once; each client plays the book-flip
+    // animation and only then reveals the new board.
+    onRoom('roll', async (game, playerIndex) => {
+      const outcome = engine.roll(game, playerIndex);
+      await game.save();
+      io.to(game.roomId).emit('roll_result', { ...outcome, gameState: formatGame(game) });
     });
 
     // ── shoot ─────────────────────────────────────────────────────────────────
-    socket.on('shoot', async ({ roomId, targetSlot }) => {
-      try {
-        const game = await Game.findOne({ roomId });
-        if (!game || game.status !== 'choosing_target') return;
+    onRoom('shoot', async (game, playerIndex, { targetSlot }) => {
+      const outcome = engine.shoot(game, playerIndex, targetSlot);
+      await game.save();
+      io.to(game.roomId).emit('shot_result', { ...outcome, gameState: formatGame(game) });
+    });
 
-        const shooterIndex = game.players.findIndex((p) => p.socketId === socket.id);
-        if (shooterIndex === -1 || shooterIndex !== game.currentTurn) return;
+    // ── rematch: both players must ask ───────────────────────────────────────
+    onRoom('rematch', async (game, playerIndex) => {
+      if (game.status !== 'finished') throw new engine.GameError('The round is not over yet.');
+      const votes = [...(game.rematchVotes || [false, false])];
+      votes[playerIndex] = true;
+      game.rematchVotes = votes;
 
-        if (!VALID_SLOTS.includes(targetSlot)) {
-          return socket.emit('error', { message: 'Invalid target slot.' });
-        }
-
-        const enemyIndex = shooterIndex === 0 ? 1 : 0;
-        const targetSoldier = game.players[enemyIndex].soldiers[targetSlot];
-
-        if (!targetSoldier || !targetSoldier.alive) {
-          return socket.emit('error', { message: 'Target is already dead or invalid.' });
-        }
-
-        // Consume one bullet
-        const shooterSlot = game.pendingShooterSlot;
-        game.players[shooterIndex].soldiers[shooterSlot].bullets -= 1;
-
-        // Every shot always hits — no miss mechanic
-        targetSoldier.alive = false;
-        const slotNum = SLOT_NUMBERS[targetSlot];
-        const logMsg = `💥 ${game.players[shooterIndex].name} SHOT and KILLED enemy Soldier ${slotNum}!`;
-        const hit = true;
-
-        game.log.push({ message: logMsg, playerIndex: shooterIndex });
-
-        // Check win condition
-        if (allSoldiersDeadFor(game, enemyIndex)) {
-          game.status = 'finished';
-          game.winner = shooterIndex;
-          game.log.push({
-            message: `🏆 ${game.players[shooterIndex].name} WINS THE GAME!`,
-            playerIndex: shooterIndex
-          });
-        } else {
-          game.status = 'playing';
-          game.currentTurn = enemyIndex;
-        }
-
-        game.pendingShooterSlot = null;
+      if (votes[0] && votes[1]) {
+        engine.startRematch(game);
         await game.save();
-
-        io.to(roomId).emit('shoot_result', {
-          hit,
-          targetSlot,
-          shooterSlot,
-          shooterName: game.players[shooterIndex].name,
-          gameState: formatGame(game)
-        });
-
-        if (game.status === 'finished') {
-          io.to(roomId).emit('game_over', {
-            winnerIndex: shooterIndex,
-            winnerName: game.players[shooterIndex].name,
-            gameState: formatGame(game)
-          });
-        }
-      } catch (err) {
-        console.error('[shoot]', err);
-        socket.emit('error', { message: 'Shot failed.' });
+        io.to(game.roomId).emit('rematch_started', { gameState: formatGame(game) });
+      } else {
+        await game.save();
+        io.to(game.roomId).emit('state', { reason: 'rematch_vote', gameState: formatGame(game) });
       }
     });
 
-    // ── disconnect ────────────────────────────────────────────────────────────
+    // ── leave_game: player closed the game on purpose ────────────────────────
+    onRoom('leave_game', async (game, playerIndex) => {
+      game.players[playerIndex].connected = false;
+      game.players[playerIndex].socketId = '';
+      await game.save();
+      socket.leave(game.roomId);
+      socket.data.roomId = undefined;
+      socket.to(game.roomId).emit('state', { reason: 'opponent_left', gameState: formatGame(game) });
+    });
+
+    // ── disconnect: tell the opponent, keep the seat for reconnect ───────────
     socket.on('disconnect', () => {
-      console.log(`[Socket] disconnected: ${socket.id}`);
+      const { roomId } = socket.data;
+      if (!roomId) return;
+      withRoom(roomId, async () => {
+        const game = await Game.findOne({ roomId });
+        if (!game) return;
+        const player = game.players.find((p) => p.socketId === socket.id);
+        if (!player) return; // already reconnected on a new socket
+        player.connected = false;
+        await game.save();
+        io.to(roomId).emit('state', { reason: 'opponent_offline', gameState: formatGame(game) });
+      }).catch((err) => console.error('[disconnect]', err));
     });
   });
 }
 
-module.exports = { initSocket };
+module.exports = { initSocket, formatGame };

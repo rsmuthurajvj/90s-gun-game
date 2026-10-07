@@ -1,89 +1,58 @@
-# 🔫 90s Gun Game
+# 🔫📖 90s Gun Game
 
-The classic classroom notebook shooting game — rebuilt as a full-stack real-time web app.
+The classic last-bench notebook shooting game from 90s school days, rebuilt for the phone.
+Open a book, the last digit of the left page picks your soldier, draw them part by part, load up and shoot.
+
+**Modes:** Pass & Play (one phone, offline) · vs Computer (offline) · Play Online (room code, real-time)
 
 ## Stack
 | Layer | Tech |
 |---|---|
-| Frontend | Angular 19 + Tailwind CSS v4 |
-| Backend | Node.js + Express.js + Socket.io |
-| Database | MongoDB (Mongoose) |
-| Future | Electron (desktop) + Capacitor (Android/iOS) |
+| App | Angular 19 (standalone + signals), Capacitor 8 → Android |
+| Ads | AdMob via `@capacitor-community/admob` (banner + interstitial + UMP consent) |
+| Server | Node.js, Express, Socket.io, MongoDB (Mongoose) — only needed for Play Online |
 
----
+## Run locally
 
-## How to Run
-
-### 1. Prerequisites
-- Node.js ≥ 18
-- MongoDB running locally (`mongodb://localhost:27017`)
-
-### 2. Backend
 ```bash
-cd backend
-npm install
-# copy .env.example → .env (edit if needed)
-npm run dev        # hot-reload via nodemon
-# or
-npm start          # production
-```
-Server starts at **http://localhost:3000**
+# backend (needs MongoDB; copy .env.example → .env)
+cd backend && npm install && npm run dev      # http://localhost:3000
+npm test                                      # rules engine tests
 
-### 3. Frontend
+# frontend
+cd frontend && npm install && npm start       # http://localhost:4200
+```
+Pass & Play and vs Computer work without the backend.
+
+## Android
 ```bash
 cd frontend
-npm install
-ng serve           # dev server at http://localhost:4200
+npm run android:sync     # ng build + cap sync
+npm run android:open     # Android Studio → run / build signed bundle
 ```
+Publishing and ad setup: see **[PLAY_STORE_GUIDE.md](PLAY_STORE_GUIDE.md)**.
 
-### 4. Play
-1. Player 1 opens **http://localhost:4200**, enters name, clicks **Create New Game**.
-2. Share the room code with Player 2 (or open a second browser tab).
-3. Player 2 enters the room code and their name, clicks **Join**.
-4. Player 1 calls the coin toss (Heads / Tails).
-5. Winner goes first — click **📖 Open Book (Roll)** each turn.
-6. Build your soldiers, then shoot enemies!
-
----
-
-## Game Rules (quick reference)
-
-| Number rolled | Soldier grows → |
+## Rules
+| Roll (0/2/4/6/8) on a soldier that has… | Result |
 |---|---|
-| First roll on a slot | Head |
-| 2nd | Body |
-| 3rd | Legs |
-| 4th | Arms |
-| 5th | Gun |
-| 6th – 11th | Bullets 1–6 (fully loaded) |
-| 12th+ | **SHOOT** (choose enemy target, 50 % hit) |
-| When bullets = 0 | **RELOAD** (6 new bullets) |
+| nothing → head → body → legs → arms | grows the next part (head, body, legs, arms, gun) |
+| a gun | loads 6 bullets (**Classic** house rule: one bullet per roll) |
+| a loaded gun | **SHOOT** — pick any living enemy soldier (**50/50** house rule: shots can miss) |
+| an empty gun | reloads 6 bullets |
+| been shot ❌ | turn lost |
 
-- Numbers available: **0, 2, 4, 6, 8** (simulates the last digit of the left page of a book)
-- 5 soldiers per player (slots 0, 2, 4, 6, 8)
-- A soldier killed → permanently marked ❌
-- **Win**: kill all 5 enemy soldiers
+Kill all 5 enemy soldiers to win the round. Rematch keeps the score, and the loser starts.
 
----
-
-## Project Structure
+## Project structure
 ```
-90sGunGame/
-├── backend/
-│   └── src/
-│       ├── app.js              ← Express + Socket.io entry
-│       ├── models/Game.js      ← Mongoose schema
-│       ├── socket/gameSocket.js← All real-time game logic
-│       ├── routes/game.js      ← REST API
-│       ├── controllers/
-│       └── middleware/
-└── frontend/
-    └── src/app/
-        ├── models/             ← TypeScript interfaces
-        ├── services/           ← SocketService, GameService
-        └── components/
-            ├── home/           ← Create / Join game
-            ├── game-board/     ← Main board + controls
-            ├── soldier-cell/   ← SVG stick figure renderer
-            └── game-log/       ← Scrollable event log
+backend/src/
+  game/engine.js         ← all game rules (pure, unit-tested in backend/test)
+  socket/gameSocket.js   ← rooms, per-room locking, reconnect tokens, rematch
+  models/Game.js         ← Mongoose schema (rooms auto-expire after 24 h)
+frontend/src/app/
+  game/engine.ts         ← TypeScript twin of engine.js (offline modes) — keep in sync
+  game/cpu.ts            ← computer opponent
+  services/session.ts    ← one GameSession interface: LocalSession / OnlineSession
+  services/ads.service.ts, fx.service.ts (sound + haptics), settings.service.ts
+  components/game-board  ← event queue: book flip → reveal → board update → shot
 ```

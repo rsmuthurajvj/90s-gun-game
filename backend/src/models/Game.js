@@ -2,14 +2,7 @@
 
 const mongoose = require('mongoose');
 
-// ── Soldier sub-document ─────────────────────────────────────────────────────
-// stage  : 0  = empty
-//          1  = head      2  = body    3  = legs    4  = arms
-//          5  = gun       6-11 = loading bullets 1-6
-//          After stage 11, bullets tracks remaining ammo (6 → 0)
-// bullets: 0-6  (shooting ammo, set to 6 when stage reaches 11 or on reload)
-// alive  : false when shot dead
-// ─────────────────────────────────────────────────────────────────────────────
+// See src/game/engine.js for what stage / bullets mean.
 
 const soldierSchema = new mongoose.Schema(
   {
@@ -20,12 +13,14 @@ const soldierSchema = new mongoose.Schema(
   { _id: false }
 );
 
-// ── Player sub-document ──────────────────────────────────────────────────────
-
 const playerSchema = new mongoose.Schema(
   {
     socketId: { type: String, default: '' },
-    name: { type: String, required: true, trim: true, maxlength: 30 },
+    // Secret handed only to this player; required to reconnect to the seat.
+    token: { type: String, required: true },
+    name: { type: String, required: true, trim: true, maxlength: 20 },
+    connected: { type: Boolean, default: true },
+    score: { type: Number, default: 0 },
     soldiers: {
       s0: { type: soldierSchema, default: () => ({}) },
       s2: { type: soldierSchema, default: () => ({}) },
@@ -37,18 +32,14 @@ const playerSchema = new mongoose.Schema(
   { _id: false }
 );
 
-// ── Game log entry ───────────────────────────────────────────────────────────
-
 const logEntrySchema = new mongoose.Schema(
   {
     message: { type: String },
-    playerIndex: { type: Number },
+    playerIndex: { type: Number, default: null },
     timestamp: { type: Date, default: () => new Date() }
   },
   { _id: false }
 );
-
-// ── Game document ─────────────────────────────────────────────────────────────
 
 const gameSchema = new mongoose.Schema(
   {
@@ -58,14 +49,23 @@ const gameSchema = new mongoose.Schema(
       enum: ['waiting', 'coin_toss', 'playing', 'choosing_target', 'finished'],
       default: 'waiting'
     },
+    rules: {
+      bulletMode: { type: String, enum: ['quick', 'classic'], default: 'quick' },
+      hitChance: { type: Number, enum: [50, 100], default: 100 }
+    },
     players: { type: [playerSchema], default: [] },
-    currentTurn: { type: Number, default: 0 },  // 0 or 1
+    currentTurn: { type: Number, default: 0 },
     lastRoll: { type: Number, default: null },
-    pendingShooterSlot: { type: String, default: null }, // e.g. 's2'
+    pendingShooterSlot: { type: String, default: null },
     winner: { type: Number, default: -1 },
+    round: { type: Number, default: 1 },
+    rematchVotes: { type: [Boolean], default: [false, false] },
     log: { type: [logEntrySchema], default: [] }
   },
   { timestamps: true }
 );
+
+// Abandoned rooms are removed automatically 24 h after their last move.
+gameSchema.index({ updatedAt: 1 }, { expireAfterSeconds: 60 * 60 * 24 });
 
 module.exports = mongoose.model('Game', gameSchema);

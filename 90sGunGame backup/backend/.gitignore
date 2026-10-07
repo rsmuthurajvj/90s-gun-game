@@ -1,0 +1,17 @@
+# Dependencies
+node_modules/
+
+# Environment – never commit secrets
+.env
+
+# Build outputs
+dist/
+.angular/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db

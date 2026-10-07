@@ -1,158 +1,208 @@
-﻿<div class="game-page">
+<div class="game">
 
-  <!-- Toast notification -->
-  <div *ngIf="notification" class="toast">{{ notification }}</div>
-
-  <!-- ── Top bar ─────────────────────────────────────────────────── -->
-  <div class="top-bar">
-    <div>
-      <div style="font-size:20px;font-weight:900;letter-spacing:-0.5px;">🔫 90s Gun Game</div>
-      <button (click)="copyRoomId()"
-        style="font-family:'Courier New',monospace;font-size:12px;color:#9ca3af;background:none;border:none;cursor:pointer;padding:0;display:flex;align-items:center;gap:4px;margin-top:2px;">
-        Room: <strong style="letter-spacing:0.2em;color:#1a1a1a;">{{ gameState?.roomId }}</strong>
-        <span>📋</span>
-      </button>
+  <!-- ── Top bar ──────────────────────────────────────────────────────── -->
+  <header class="topbar">
+    <button class="icon-btn" (click)="onBack()" aria-label="Leave game">✕</button>
+    <div class="title">
+      @if (isOnline() && view()?.roomId) {
+        <button class="room" (click)="copyCode()" aria-label="Copy room code">Room <b>{{ view()!.roomId }}</b></button>
+      } @else {
+        <span class="mode-name">{{ mode() === 'cpu' ? 'vs Computer' : 'Pass & Play' }}</span>
+      }
+      @if ((view()?.round ?? 1) > 1) { <span class="round">Round {{ view()!.round }}</span> }
     </div>
-    <div style="text-align:right;">
-      <div style="font-family:'Courier New',monospace;font-size:11px;color:#9ca3af;text-transform:uppercase;letter-spacing:0.08em;">
-        {{ gameState?.status?.replace('_',' ') }}
-      </div>
-      <div *ngIf="gameState?.status === 'playing' || gameState?.status === 'choosing_target'"
-        style="font-size:13px;font-weight:700;"
-        [style.color]="isMyTurn ? '#ea580c' : '#6b7280'">
-        {{ isMyTurn ? '⚡ Your turn' : (getCurrentTurnName() + "'s turn") }}
-      </div>
-    </div>
-  </div>
+    <button class="icon-btn" (click)="sheet.set('help')" aria-label="How to play">?</button>
+    <button class="icon-btn" (click)="sheet.set('log')" aria-label="Game log">📜</button>
+    <button class="icon-btn" (click)="toggleSound()" [attr.aria-label]="soundOn ? 'Mute' : 'Unmute'">{{ soundOn ? '🔊' : '🔇' }}</button>
+  </header>
 
-  <!-- ── Waiting for opponent ───────────────────────────────────── -->
-  <div *ngIf="gameState?.status === 'waiting'" class="overlay-panel">
-    <div style="font-size:48px;margin-bottom:12px;">⏳</div>
-    <h2 style="font-size:22px;font-weight:900;margin:0 0 8px;">Waiting for opponent…</h2>
-    <p style="color:#6b7280;font-size:14px;margin:0 0 16px;">Share this code with your friend:</p>
-    <button (click)="copyRoomId()"
-      style="font-size:28px;font-weight:900;letter-spacing:0.3em;color:#f97316;
-             background:#fff7ed;border:2.5px solid #fed7aa;border-radius:12px;
-             padding:12px 24px;cursor:pointer;font-family:'Courier New',monospace;">
-      {{ gameState?.roomId }}
-    </button>
-    <p style="color:#9ca3af;font-size:11px;font-family:'Courier New',monospace;margin-top:8px;">click to copy</p>
-  </div>
-
-  <!-- ── Coin toss ──────────────────────────────────────────────── -->
-  <div *ngIf="gameState?.status === 'coin_toss'" class="overlay-panel">
-
-    <!-- Coin result animation -->
-    <div *ngIf="coinResult"
-      style="font-size:20px;font-weight:700;color:#f97316;margin-bottom:16px;">
-      🪙 {{ coinResult }}
-    </div>
-
-    <ng-container *ngIf="!coinResult">
-      <div style="font-size:52px;margin-bottom:12px;">🪙</div>
-      <h2 style="font-size:20px;font-weight:900;margin:0 0 6px;">Coin Toss</h2>
-
-      <!-- Player 0 chooses -->
-      <ng-container *ngIf="myPlayerIndex === 0 && !coinChoice">
-        <p style="color:#6b7280;font-size:14px;margin:0 0 20px;">You go first — call it!</p>
-        <div style="display:flex;justify-content:center;gap:16px;">
-          <button class="btn btn-orange" style="padding:18px 28px;font-size:20px;min-width:130px;" (click)="chooseCoin('heads')">
-            🟡 Heads
-          </button>
-          <button class="btn btn-gray" style="padding:18px 28px;font-size:20px;min-width:130px;" (click)="chooseCoin('tails')">
-            ⚫ Tails
-          </button>
-        </div>
-      </ng-container>
-
-      <div *ngIf="myPlayerIndex === 0 && coinChoice"
-        style="color:#9ca3af;font-family:'Courier New',monospace;font-size:14px;">Flipping…</div>
-
-      <!-- Player 1 waits -->
-      <div *ngIf="myPlayerIndex === 1"
-        style="color:#6b7280;font-family:'Courier New',monospace;font-size:14px;">
-        Waiting for {{ gameState?.players?.[0]?.name }} to flip the coin…
-      </div>
-    </ng-container>
-  </div>
-
-  <!-- ── Active game (playing / choosing_target / finished) ─────── -->
-  <ng-container *ngIf="gameState?.status === 'playing' || gameState?.status === 'choosing_target' || gameState?.status === 'finished'">
-
-    <!-- Banners -->
-    <div *ngIf="isChoosingTarget" class="choose-banner">
-      🎯 Choose an enemy soldier to shoot! (click on their column)
-    </div>
-    <div *ngIf="isWaitingForOpponent" class="waiting-banner">
-      ⏳ Opponent is choosing a target…
-    </div>
-
-    <!-- ── 2-column layout: Board (left) | Book (right) ─────────── -->
-    <div class="game-layout">
-
-      <!-- LEFT: Game board + log -->
-      <div class="game-left">
-        <div class="board-wrap">
-          <div class="board-grid">
-            <div class="board-col-header p1">
-              {{ gameState?.players?.[0]?.name ?? 'Player 1' }}
-              <span *ngIf="myPlayerIndex === 0" style="font-weight:400;font-size:11px;color:#9a3412;"> (you)</span>
-            </div>
-            <div class="board-center-header"></div>
-            <div class="board-col-header p2">
-              {{ gameState?.players?.[1]?.name ?? 'Player 2' }}
-              <span *ngIf="myPlayerIndex === 1" style="font-weight:400;font-size:11px;color:#1e3a8a;"> (you)</span>
-            </div>
-            <ng-container *ngFor="let slot of soldierSlots">
-              <div class="board-cell left">
-                <app-soldier-cell [soldier]="getSoldier(0, slot)" [slotKey]="slot" [slotNumber]="slotNumbers[slot]"
-                  [isTargetable]="isTargetable(0, slot)" facing="right" (targetSelected)="shootTarget($event)"/>
-              </div>
-              <div class="board-center-cell">
-                <div class="divider-bar"><span></span></div>
-                <span class="slot-label">{{ slotNumbers[slot] }}</span>
-              </div>
-              <div class="board-cell">
-                <app-soldier-cell [soldier]="getSoldier(1, slot)" [slotKey]="slot" [slotNumber]="slotNumbers[slot]"
-                  [isTargetable]="isTargetable(1, slot)" facing="left" (targetSelected)="shootTarget($event)"/>
-              </div>
-            </ng-container>
+  @if (view(); as v) {
+    <!-- ── Players ───────────────────────────────────────────────────── -->
+    <section class="hud">
+      @for (p of [0, 1]; track p) {
+        <div class="player" [class.p1]="p === 0" [class.p2]="p === 1"
+             [class.active]="(v.status === 'playing' || v.status === 'choosing_target') && v.currentTurn === p"
+             [class.offline]="player(p)?.connected === false">
+          <div class="pname">
+            <span class="dot"></span>
+            <span class="nm">{{ player(p)?.name ?? 'Waiting…' }}</span>
+            @if (label(p)) { <span class="tag">{{ label(p) }}</span> }
           </div>
+          <div class="pmeta">
+            <span class="lives" [attr.aria-label]="aliveCount(p) + ' soldiers alive'">
+              @for (s of slots; track s) { <i [class.x]="!soldier(p, s).alive"></i> }
+            </span>
+            @if (player(p)?.score) { <span class="score">★ {{ player(p)!.score }}</span> }
+          </div>
+          @if (v.currentTurn === p && (v.status === 'playing' || v.status === 'choosing_target')) {
+            <span class="turn-flag">TURN</span>
+          }
         </div>
+        @if (p === 0) { <div class="vs">VS</div> }
+      }
+    </section>
 
-        <app-game-log [logs]="gameState?.log ?? []" />
+    <!-- ── Waiting room (online) ─────────────────────────────────────── -->
+    @if (v.status === 'waiting') {
+      <section class="center-panel">
+        <div class="paper-card waiting">
+          <h2 class="h-title wait-title">Waiting for your friend<span class="dots"></span></h2>
+          <p>Send them this room code:</p>
+          <button class="room-code" (click)="copyCode()">{{ v.roomId }}</button>
+          <div class="share-row">
+            <button class="btn btn-primary" (click)="shareCode()">📤 Share</button>
+            <button class="btn btn-ghost" (click)="copyCode()">📋 Copy</button>
+          </div>
+          <ol class="steps">
+            <li>Friend opens <b>90s Gun Game</b></li>
+            <li>Taps <b>Play Online → Join friend</b></li>
+            <li>Types the code above</li>
+          </ol>
+        </div>
+      </section>
+    }
+
+    <!-- ── Coin toss ─────────────────────────────────────────────────── -->
+    @if (coinView(); as c) {
+      <section class="center-panel">
+        <app-coin-toss [view]="c" (choose)="callCoin($event)" />
+      </section>
+    }
+
+    <!-- ── Board ─────────────────────────────────────────────────────── -->
+    @if (v.status === 'playing' || v.status === 'choosing_target' || v.status === 'finished') {
+      <div class="status-line" [class]="'tone-' + statusLine().tone">{{ statusLine().text }}</div>
+
+      <section class="board" #board [class.shake]="shake()" [class.targeting]="choosing()">
+        @for (slot of slots; track slot) {
+          <div class="row">
+            @for (p of [0, 1]; track p) {
+              <button class="cell" [class.left]="p === 0" [class.right]="p === 1"
+                      [attr.data-cell]="p + '-' + slot"
+                      [class.targetable]="isTargetable(p, slot)"
+                      [class.shooter]="isShooter(p, slot)"
+                      [class.rolled]="rolledCell() === p + '-' + slot"
+                      [style.order]="p === 0 ? 0 : 2"
+                      [attr.aria-label]="player(p)?.name + ' soldier ' + slotNumbers[slot]"
+                      [attr.tabindex]="isTargetable(p, slot) ? 0 : -1"
+                      (click)="target(p, slot)">
+                <app-soldier [soldier]="soldier(p, slot)" [color]="color(p)" [facing]="p === 0 ? 'right' : 'left'"
+                             [flash]="flashCell() === p + '-' + slot" />
+                @if (isTargetable(p, slot)) { <span class="crosshair" aria-hidden="true"></span> }
+              </button>
+            }
+            <div class="num" [class.hot]="rolledCell()?.endsWith(slot)">
+              <span>{{ slotNumbers[slot] }}</span>
+              @if (rolledCell()?.endsWith(slot)) {
+                <svg viewBox="0 0 40 40"><ellipse pathLength="1" cx="20" cy="20" rx="17" ry="15" /></svg>
+              }
+            </div>
+          </div>
+        }
+
+        @if (shotFx(); as s) {
+          <svg class="shot-layer" [attr.viewBox]="'0 0 ' + s.w + ' ' + s.h" aria-hidden="true">
+            <line class="trail" pathLength="1" [attr.x1]="s.x1" [attr.y1]="s.y1" [attr.x2]="s.x2" [attr.y2]="s.y2" />
+            <g class="burst" [attr.transform]="'translate(' + s.x2 + ' ' + s.y2 + ')'">
+              <polygon transform="scale(1.45 1.2)" points="0,-30 8,-12 28,-18 14,-2 30,10 10,10 6,30 -4,12 -24,24 -14,4 -32,-8 -10,-10" [class.miss]="!s.hit" />
+              <text y="6">{{ s.hit ? 'BANG!' : 'MISS!' }}</text>
+            </g>
+          </svg>
+        }
+      </section>
+
+      <!-- ── Dock ────────────────────────────────────────────────────── -->
+      <footer class="dock">
+        <button class="book-btn" [class.ready]="canRoll()" [disabled]="!canRoll()" (click)="roll()"
+                [style.--who]="color(v.currentTurn)">
+          <span class="book-ico" aria-hidden="true"><i></i><i></i></span>
+          <span class="book-label">
+            @if (canRoll()) { OPEN THE BOOK }
+            @else if (choosing()) { PICK A TARGET ↑ }
+            @else if (v.status === 'finished') { ROUND OVER }
+            @else { <span class="wait">{{ busy() ? '…' : 'Waiting' }}</span> }
+          </span>
+        </button>
+      </footer>
+    }
+  } @else {
+    <section class="center-panel"><p class="loading">Connecting to the game<span class="dots"></span></p></section>
+  }
+</div>
+
+<!-- ── Overlays ───────────────────────────────────────────────────────── -->
+@if (rollView(); as r) { <app-book-overlay [view]="r" (skip)="skipAnimation()" /> }
+
+@if (toast()) { <div class="toast" role="status">{{ toast() }}</div> }
+
+@if (resultOpen() && result(); as r) {
+  <div class="overlay-backdrop">
+    @if (r.iWon !== false) {
+      <div class="confetti" aria-hidden="true">
+        @for (c of confetti; track $index) {
+          <i [style.left.%]="c.left" [style.animation-delay.s]="c.delay" [style.background]="c.color"></i>
+        }
+      </div>
+    }
+    <div class="paper-card result-card">
+      <div class="result-icon">{{ r.icon }}</div>
+      <h2 class="result-title" [class.lose]="r.iWon === false" [style.color]="r.iWon === false ? null : color(view()!.winner)">{{ r.title }}</h2>
+      <div class="scoreline">
+        <span class="p1">{{ player(0)?.name }}</span>
+        <b>{{ player(0)?.score ?? 0 }} – {{ player(1)?.score ?? 0 }}</b>
+        <span class="p2">{{ player(1)?.name }}</span>
       </div>
 
-      <!-- RIGHT: Book flip -->
-      <div class="game-right">
-        <app-book-flip
-          [canFlip]="canRoll"
-          [lastResult]="lastRollResult"
-          [waitMessage]="isChoosingTarget ? 'Choose a target to shoot!' : (isWaitingForOpponent ? 'Opponent is shooting…' : '')"
-          (flipRequested)="roll()">
-        </app-book-flip>
+      @if (isOnline()) {
+        @if (r.oppGone) {
+          <p class="vote warn">{{ r.oppName }} left the game.</p>
+        } @else if (r.myVote) {
+          <p class="vote">Waiting for {{ r.oppName }} to accept<span class="dots"></span></p>
+        } @else if (r.oppVote) {
+          <p class="vote hot">{{ r.oppName }} wants a rematch!</p>
+        }
+      }
+
+      <div class="result-actions">
+        <button class="btn btn-primary" [disabled]="r.myVote || r.oppGone" (click)="rematch()">
+          {{ r.oppVote && !r.myVote ? 'Accept rematch' : 'Rematch' }}
+        </button>
+        <button class="btn btn-ghost" (click)="goHome()">Home</button>
       </div>
-
-    </div><!-- /game-layout -->
-
-  </ng-container>
-
-  <!-- ── Game Over overlay ─────────────────────────────────────── -->
-  <div *ngIf="gameState?.status === 'finished'" class="winner-overlay">
-    <div class="winner-card">
-      <div style="font-size:64px;margin-bottom:8px;">
-        {{ gameState?.winner === myPlayerIndex ? '🏆' : '💀' }}
-      </div>
-      <h2 style="font-size:28px;font-weight:900;margin:0 0 8px;">
-        {{ gameState?.winner === myPlayerIndex ? 'YOU WIN!' : 'YOU LOSE!' }}
-      </h2>
-      <p style="color:#6b7280;font-size:14px;margin:0 0 24px;">
-        {{ gameState?.players?.[gameState?.winner ?? 0]?.name }} wins the game!
-      </p>
-      <button class="btn btn-orange" style="width:100%;padding:14px;font-size:16px;" (click)="newGame()">
-        🎮 Play Again
-      </button>
+      <button class="link-btn" (click)="resultOpen.set(false)">View the board</button>
     </div>
   </div>
+}
 
-</div>
+@if (!resultOpen() && view()?.status === 'finished') {
+  <button class="reopen-result btn btn-primary btn-small" (click)="resultOpen.set(true)">Show result</button>
+}
+
+@if (sheet() === 'log') {
+  <div class="overlay-backdrop sheet-host" (click)="sheet.set(null)">
+    <div class="sheet paper-card" (click)="$event.stopPropagation()">
+      <button class="icon-btn close" (click)="sheet.set(null)" aria-label="Close">✕</button>
+      <h2 class="h-title">Game log</h2>
+      <ul class="log">
+        @for (e of (view()?.log ?? []).slice().reverse(); track $index) {
+          <li [class.p1]="e.playerIndex === 0" [class.p2]="e.playerIndex === 1">{{ e.message }}</li>
+        } @empty { <li>Nothing yet.</li> }
+      </ul>
+    </div>
+  </div>
+}
+
+@if (sheet() === 'help') { <app-how-to-play (close)="sheet.set(null)" /> }
+
+@if (sheet() === 'leave') {
+  <div class="overlay-backdrop" (click)="sheet.set(null)">
+    <div class="paper-card confirm" (click)="$event.stopPropagation()" role="alertdialog" aria-label="Leave game">
+      <h2 class="h-title">Leave this game?</h2>
+      <p>{{ isOnline() ? 'Your friend will see that you left.' : 'This game will be lost.' }}</p>
+      <div class="result-actions">
+        <button class="btn btn-ghost" (click)="sheet.set(null)">Stay</button>
+        <button class="btn btn-danger" (click)="goHome()">Leave</button>
+      </div>
+    </div>
+  </div>
+}
